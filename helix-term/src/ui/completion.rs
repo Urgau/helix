@@ -107,6 +107,7 @@ impl Completion {
                 offset_encoding: helix_lsp::OffsetEncoding,
                 start_offset: usize,
                 trigger_offset: usize,
+                include_placeholder: bool,
             ) -> Transaction {
                 use helix_lsp::snippet;
 
@@ -133,6 +134,7 @@ impl Completion {
                                 &edit,
                                 doc.line_ending.as_str(),
                                 offset_encoding,
+                                include_placeholder,
                             ),
                             Err(err) => {
                                 log::error!(
@@ -205,6 +207,7 @@ impl Completion {
                         offset_encoding,
                         start_offset,
                         trigger_offset,
+                        true,
                     );
 
                     // initialize a savepoint
@@ -227,6 +230,7 @@ impl Completion {
                         offset_encoding,
                         start_offset,
                         trigger_offset,
+                        false,
                     );
 
                     doc.apply(&transaction, view.id);
