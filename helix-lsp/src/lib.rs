@@ -58,6 +58,7 @@ pub enum OffsetEncoding {
 
 pub mod util {
     use super::*;
+    use helix_core::{SmallVec, smallvec};
     use helix_core::{diagnostic::NumberOrString, Range, Rope, Selection, Tendril, Transaction};
 
     /// Converts a diagnostic in the document to [`lsp::Diagnostic`].
@@ -199,38 +200,58 @@ pub mod util {
 
     /// Creates a [Transaction] from the [lsp::TextEdit] in a completion response.
     /// The transaction applies the edit to all cursors.
-    pub fn generate_transaction_from_completion_edit(
+    pub fn generate_transaction_from_completion_edit<F>(
         doc: &Rope,
         selection: &Selection,
-        edit: lsp::TextEdit,
+        edit_range: &lsp::Range,
+        replacement_gen: F,
         offset_encoding: OffsetEncoding,
-    ) -> Transaction {
-        let replacement: Option<Tendril> = if edit.new_text.is_empty() {
-            None
-        } else {
-            Some(edit.new_text.into())
-        };
-
+    ) -> Transaction
+    where
+        F: Fn(usize) -> (Option<Tendril>, Vec<SmallVec<[(usize, usize);1]>>),
+    {
         let text = doc.slice(..);
         let primary_cursor = selection.primary().cursor(text);
 
-        let start_offset = match lsp_pos_to_pos(doc, edit.range.start, offset_encoding) {
+        let start_offset = match lsp_pos_to_pos(doc, edit_range.start, offset_encoding) {
             Some(start) => start as i128 - primary_cursor as i128,
             None => return Transaction::new(doc),
         };
-        let end_offset = match lsp_pos_to_pos(doc, edit.range.end, offset_encoding) {
+        let end_offset = match lsp_pos_to_pos(doc, edit_range.end, offset_encoding) {
             Some(end) => end as i128 - primary_cursor as i128,
             None => return Transaction::new(doc),
         };
 
-        Transaction::change_by_selection(doc, selection, |range| {
+        // For each cursor stores offsets for the first tabstop
+        let mut cursor_tabstop_offsets = Vec::<SmallVec<[(i128, i128);1]>>::new();
+        let transaction = Transaction::change_by_selection(doc, selection, |range| {
             let cursor = range.cursor(text);
+            let (replacement, tabstops) = replacement_gen((cursor as i128 + start_offset) as usize);
+            let replacement_len = if let Some(str) = &replacement {
+                str.chars().count()
+            } else {
+                0
+            };
+            cursor_tabstop_offsets.push(
+                tabstops.first().unwrap_or(&smallvec![(replacement_len, replacement_len)]).iter().map(
+                    |(from, to)| -> (i128, i128) {
+                        (*from as i128 - replacement_len as i128, *to as i128 - replacement_len as i128)
+                    }
+                ).collect()
+            );
             (
                 (cursor as i128 + start_offset) as usize,
                 (cursor as i128 + end_offset) as usize,
-                replacement.clone(),
+                replacement,
             )
-        })
+        });
+        let mut cursor_tabstop_offsets_iter = cursor_tabstop_offsets.iter();
+        let selection = selection.clone().map(transaction.changes()).transform_iter(|range| {
+            cursor_tabstop_offsets_iter.next().unwrap().iter().map(move |(from, to)| {
+                Range::new((range.anchor as i128 + *from) as usize, (range.anchor as i128 + *to) as usize)
+            })
+        });
+        transaction.with_selection(selection)
     }
 
     pub fn generate_transaction_from_edits(

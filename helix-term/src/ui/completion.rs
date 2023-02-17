@@ -4,7 +4,7 @@ use tui::buffer::Buffer as Surface;
 
 use std::borrow::Cow;
 
-use helix_core::{Change, Transaction};
+use helix_core::{Change, Tendril, Transaction};
 use helix_view::{
     graphics::Rect,
     input::{KeyCode, KeyEvent},
@@ -127,15 +127,23 @@ impl Completion {
                         )
                     {
                         match snippet::parse(&edit.new_text) {
-                            Ok(snippet) => snippet::into_transaction(
-                                snippet,
-                                doc.text(),
-                                doc.selection(view_id),
-                                &edit,
-                                doc.line_ending.as_str(),
-                                offset_encoding,
-                                include_placeholder,
-                            ),
+                            Ok(snippet) => {
+                                util::generate_transaction_from_completion_edit(
+                                    doc.text(),
+                                    doc.selection(view_id),
+                                    &edit.range,
+                                    |cursor| -> (Option<Tendril>, Vec<helix_core::SmallVec<[(usize, usize);1]>>) {
+                                        let newline_with_offset = format!(
+                                            "{line_ending}{blank:width$}",
+                                            line_ending = doc.line_ending.as_str(),
+                                            width = cursor - doc.text().line_to_char(doc.text().char_to_line(cursor)),
+                                            blank = ""
+                                        );
+                                        snippet::render(&snippet, newline_with_offset, include_placeholder)
+                                    },
+                                    offset_encoding,
+                                )
+                            },
                             Err(err) => {
                                 log::error!(
                                     "Failed to parse snippet: {:?}, remaining output: {}",
@@ -146,10 +154,18 @@ impl Completion {
                             }
                         }
                     } else {
+                        let replacement: Option<Tendril> = if edit.new_text.is_empty() {
+                            None
+                        } else {
+                            Some(edit.new_text.clone().into())
+                        };
                         util::generate_transaction_from_completion_edit(
                             doc.text(),
                             doc.selection(view_id),
-                            edit,
+                            &edit.range,
+                            |_| -> (Option<Tendril>, Vec<helix_core::SmallVec<[(usize, usize);1]>>) {
+                                (replacement.clone(), Vec::new())
+                            },
                             offset_encoding, // TODO: should probably transcode in Client
                         )
                     }
