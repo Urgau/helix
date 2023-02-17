@@ -8,7 +8,7 @@ use tui::{buffer::Buffer as Surface, text::Span};
 
 use std::borrow::Cow;
 
-use helix_core::{Change, Transaction};
+use helix_core::{Change, Tendril, Transaction};
 use helix_view::{graphics::Rect, Document, Editor};
 
 use crate::commands;
@@ -138,14 +138,27 @@ impl Completion {
                         )
                     {
                         match snippet::parse(&edit.new_text) {
-                            Ok(snippet) => snippet::into_transaction(
-                                snippet,
+                            Ok(snippet) => util::generate_transaction_from_completion_edit(
                                 doc.text(),
                                 doc.selection(view_id),
-                                &edit,
-                                doc.line_ending.as_str(),
+                                &edit.range,
+                                |cursor| -> util::ReplacementOutput {
+                                    let newline_with_offset = format!(
+                                        "{line_ending}{blank:width$}",
+                                        line_ending = doc.line_ending.as_str(),
+                                        width = cursor
+                                            - doc
+                                                .text()
+                                                .line_to_char(doc.text().char_to_line(cursor)),
+                                        blank = ""
+                                    );
+                                    snippet::render(
+                                        &snippet,
+                                        newline_with_offset,
+                                        include_placeholder,
+                                    )
+                                },
                                 offset_encoding,
-                                include_placeholder,
                             ),
                             Err(err) => {
                                 log::error!(
@@ -157,10 +170,16 @@ impl Completion {
                             }
                         }
                     } else {
+                        let replacement: Option<Tendril> = if edit.new_text.is_empty() {
+                            None
+                        } else {
+                            Some(edit.new_text.clone().into())
+                        };
                         util::generate_transaction_from_completion_edit(
                             doc.text(),
                             doc.selection(view_id),
-                            edit,
+                            &edit.range,
+                            |_| -> util::ReplacementOutput { (replacement.clone(), Vec::new()) },
                             offset_encoding, // TODO: should probably transcode in Client
                         )
                     }
