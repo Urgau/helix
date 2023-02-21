@@ -308,13 +308,18 @@ mod parser {
     }
 
     fn placeholder<'a>() -> impl Parser<'a, Output = SnippetElement<'a>> {
-        let text = map(text(['$', '}']), SnippetElement::Text);
+        // The parser has to be constructed lazily to avoid infinite recursion
+        let nested = |input: &'a str| {
+            let text = map(text(['$', '}']), SnippetElement::Text);
+            let parser = one_or_more(choice!(anything(), text));
+            parser.parse(input)
+        };
         map(
             seq!(
                 "${",
                 digit(),
                 ":",
-                one_or_more(choice!(anything(), text)),
+                nested,
                 "}"
             ),
             |seq| SnippetElement::Placeholder {
@@ -369,11 +374,7 @@ mod parser {
     }
 
     fn anything<'a>() -> impl Parser<'a, Output = SnippetElement<'a>> {
-        // The parser has to be constructed lazily to avoid infinite recursion
-        |input: &'a str| {
-            let parser = choice!(tabstop(), placeholder(), choice(), variable());
-            parser.parse(input)
-        }
+        choice!(tabstop(), placeholder(), choice(), variable())
     }
 
     fn snippet<'a>() -> impl Parser<'a, Output = Snippet<'a>> {
