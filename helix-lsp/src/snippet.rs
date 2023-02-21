@@ -213,6 +213,10 @@ mod parser {
         take_while(|c| c != '$')
     }
 
+    fn text_nested<'a>() -> impl Parser<'a, Output = &'a str> {
+        take_while(|c| c != '$' && c != '}')
+    }
+
     fn digit<'a>() -> impl Parser<'a, Output = usize> {
         filter_map(take_while(|c| c.is_ascii_digit()), |s| s.parse().ok())
     }
@@ -305,17 +309,10 @@ mod parser {
     }
 
     fn placeholder<'a>() -> impl Parser<'a, Output = SnippetElement<'a>> {
-        // TODO: why doesn't parse_as work?
-        // let value = reparse_as(take_until(|c| c == '}'), anything());
-        // TODO: fix this to parse nested placeholders (take until terminates too early)
-        let value = filter_map(take_until(|c| c == '}'), |s| {
-            snippet().parse(s).map(|parse_result| parse_result.1).ok()
-        });
-
-        map(seq!("${", digit(), ":", value, "}"), |seq| {
+        map(seq!("${", digit(), ":", one_or_more(anything_nested()), "}"), |seq| {
             SnippetElement::Placeholder {
                 tabstop: seq.1,
-                value: seq.3.elements,
+                value: seq.3,
             }
         })
     }
@@ -367,6 +364,15 @@ mod parser {
     fn anything<'a>() -> impl Parser<'a, Output = SnippetElement<'a>> {
         let text = map(text(), SnippetElement::Text);
         choice!(tabstop(), placeholder(), choice(), variable(), text)
+    }
+
+    fn anything_nested<'a>() -> impl Parser<'a, Output = SnippetElement<'a>> {
+        // The parser has to be constructed lazily to avoid infinite recursion
+        |input : &'a str| {
+            let text = map(text_nested(), SnippetElement::Text);
+            let parser = choice!(tabstop(), placeholder(), choice(), variable(), text);
+            parser.parse(input)
+        }
     }
 
     fn snippet<'a>() -> impl Parser<'a, Output = Snippet<'a>> {
@@ -435,6 +441,25 @@ mod parser {
                     },]
                 }),
                 parse("${1:var, $2}")
+            )
+        }
+
+        #[test]
+        fn parse_placeholder_nested_in_placeholder() {
+            assert_eq!(
+                Ok(Snippet {
+                    elements: vec![Placeholder {
+                        tabstop: 1,
+                        value: vec!(
+                            Text("foo "),
+                            Placeholder {
+                                tabstop: 2,
+                                value: vec!(Text("bar")),
+                            },
+                        ),
+                    },]
+                }),
+                parse("${1:foo ${2:bar}}")
             )
         }
 
