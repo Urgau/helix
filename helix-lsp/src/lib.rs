@@ -57,6 +57,8 @@ pub enum OffsetEncoding {
 }
 
 pub mod util {
+    use crate::snippet::{Snippet, render};
+
     use super::*;
     use helix_core::line_ending::{line_end_byte_index, line_end_char_index};
     use helix_core::{diagnostic::NumberOrString, Range, Rope, Selection, Tendril, Transaction};
@@ -247,22 +249,53 @@ pub mod util {
         Some(Range::new(start, end))
     }
 
-    // to avoid clippy::type_complexity
-    /// Output type return by the replacement function in generate_transaction_from_completion_edit
-    pub type ReplacementOutput = (Option<Tendril>, Vec<SmallVec<[(usize, usize); 1]>>);
-
     /// Creates a [Transaction] from the [lsp::TextEdit] in a completion response.
     /// The transaction applies the edit to all cursors.
-    pub fn generate_transaction_from_completion_edit<F>(
+    pub fn generate_transaction_from_completion_edit(
+        doc: &Rope,
+        selection: &Selection,
+        edit: lsp::TextEdit,
+        offset_encoding: OffsetEncoding,
+    ) -> Transaction {
+        let replacement: Option<Tendril> = if edit.new_text.is_empty() {
+            None
+        } else {
+            Some(edit.new_text.into())
+        };
+
+        let text = doc.slice(..);
+        let primary_cursor = selection.primary().cursor(text);
+
+        let start_offset = match lsp_pos_to_pos(doc, edit.range.start, offset_encoding) {
+            Some(start) => start as i128 - primary_cursor as i128,
+            None => return Transaction::new(doc),
+        };
+        let end_offset = match lsp_pos_to_pos(doc, edit.range.end, offset_encoding) {
+            Some(end) => end as i128 - primary_cursor as i128,
+            None => return Transaction::new(doc),
+        };
+
+        Transaction::change_by_selection(doc, selection, |range| {
+            let cursor = range.cursor(text);
+            (
+                (cursor as i128 + start_offset) as usize,
+                (cursor as i128 + end_offset) as usize,
+                replacement.clone(),
+            )
+        })
+    }
+
+    /// Creates a [Transaction] from the [Snippet] in a completion response.
+    /// The transaction applies the edit to all cursors.
+    pub fn generate_transaction_from_snippet(
         doc: &Rope,
         selection: &Selection,
         edit_range: &lsp::Range,
-        replacement_fn: F,
+        snippet: Snippet,
+        line_ending: &str,
+        include_placeholder: bool,
         offset_encoding: OffsetEncoding,
-    ) -> Transaction
-    where
-        F: Fn(usize) -> ReplacementOutput,
-    {
+    ) -> Transaction {
         let text = doc.slice(..);
         let primary_cursor = selection.primary().cursor(text);
 
@@ -279,13 +312,17 @@ pub mod util {
         let mut cursor_tabstop_offsets = Vec::<SmallVec<[(i128, i128); 1]>>::new();
         let transaction = Transaction::change_by_selection(doc, selection, |range| {
             let cursor = range.cursor(text);
-            let (replacement, tabstops) = replacement_fn((cursor as i128 + start_offset) as usize);
-            let replacement_len = if let Some(str) = &replacement {
-                str.chars().count()
-            } else {
-                0
-            };
+            let replacement_start = (cursor as i128 + start_offset) as usize;
+            let replacement_end = (cursor as i128 + end_offset) as usize;
+            let newline_with_offset = format!(
+                "{line_ending}{blank:width$}",
+                line_ending = line_ending,
+                width = replacement_start - doc.line_to_char(doc.char_to_line(replacement_start)),
+                blank = ""
+            );
 
+            let (replacement, tabstops) = render(&snippet, newline_with_offset, include_placeholder);
+            let replacement_len = replacement.chars().count();
             cursor_tabstop_offsets.push(
                 tabstops
                     .first()
@@ -299,12 +336,7 @@ pub mod util {
                     })
                     .collect(),
             );
-
-            (
-                (cursor as i128 + start_offset) as usize,
-                (cursor as i128 + end_offset) as usize,
-                replacement,
-            )
+            (replacement_start, replacement_end, Some(replacement.into()))
         });
 
         // Create new selection based the cursor tabstop from above

@@ -122,7 +122,7 @@ pub fn render(
     snippet: &Snippet<'_>,
     newline_with_offset: String,
     include_placeholer: bool,
-) -> crate::util::ReplacementOutput {
+) -> (String, Vec<SmallVec<[(usize, usize); 1]>>) {
     let mut insert = String::new();
     let mut tabstops = Vec::new();
     let mut offset = 0;
@@ -154,8 +154,7 @@ pub fn render(
             }
         }
     }
-
-    (Some(insert.into()), ntabstops)
+    (insert, ntabstops)
 }
 
 mod parser {

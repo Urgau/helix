@@ -8,7 +8,7 @@ use tui::{buffer::Buffer as Surface, text::Span};
 
 use std::borrow::Cow;
 
-use helix_core::{Change, Tendril, Transaction};
+use helix_core::{Change, Transaction};
 use helix_view::{graphics::Rect, Document, Editor};
 
 use crate::commands;
@@ -138,28 +138,17 @@ impl Completion {
                         )
                     {
                         match snippet::parse(&edit.new_text) {
-                            Ok(snippet) => util::generate_transaction_from_completion_edit(
-                                doc.text(),
-                                doc.selection(view_id),
-                                &edit.range,
-                                |cursor| -> util::ReplacementOutput {
-                                    let newline_with_offset = format!(
-                                        "{line_ending}{blank:width$}",
-                                        line_ending = doc.line_ending.as_str(),
-                                        width = cursor
-                                            - doc
-                                                .text()
-                                                .line_to_char(doc.text().char_to_line(cursor)),
-                                        blank = ""
-                                    );
-                                    snippet::render(
-                                        &snippet,
-                                        newline_with_offset,
-                                        include_placeholder,
-                                    )
-                                },
-                                offset_encoding,
-                            ),
+                            Ok(snippet) => {
+                                util::generate_transaction_from_snippet(
+                                    doc.text(),
+                                    doc.selection(view_id),
+                                    &edit.range,
+                                    snippet,
+                                    doc.line_ending.as_str(),
+                                    include_placeholder,
+                                    offset_encoding,
+                                )
+                            },
                             Err(err) => {
                                 log::error!(
                                     "Failed to parse snippet: {:?}, remaining output: {}",
@@ -170,16 +159,10 @@ impl Completion {
                             }
                         }
                     } else {
-                        let replacement: Option<Tendril> = if edit.new_text.is_empty() {
-                            None
-                        } else {
-                            Some(edit.new_text.clone().into())
-                        };
                         util::generate_transaction_from_completion_edit(
                             doc.text(),
                             doc.selection(view_id),
-                            &edit.range,
-                            |_| -> util::ReplacementOutput { (replacement.clone(), Vec::new()) },
+                            edit,
                             offset_encoding, // TODO: should probably transcode in Client
                         )
                     }
