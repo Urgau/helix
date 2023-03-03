@@ -118,8 +118,11 @@ impl Completion {
                 offset_encoding: helix_lsp::OffsetEncoding,
                 start_offset: usize,
                 trigger_offset: usize,
+                include_placeholder: bool,
             ) -> Transaction {
-                let transaction = if let Some(edit) = &item.text_edit {
+                use helix_lsp::snippet;
+
+                if let Some(edit) = &item.text_edit {
                     let edit = match edit {
                         lsp::CompletionTextEdit::Edit(edit) => edit.clone(),
                         lsp::CompletionTextEdit::InsertAndReplace(item) => {
@@ -128,12 +131,39 @@ impl Completion {
                         }
                     };
 
-                    util::generate_transaction_from_completion_edit(
-                        doc.text(),
-                        doc.selection(view_id),
-                        edit,
-                        offset_encoding, // TODO: should probably transcode in Client
-                    )
+                    if matches!(item.kind, Some(lsp::CompletionItemKind::SNIPPET))
+                        || matches!(
+                            item.insert_text_format,
+                            Some(lsp::InsertTextFormat::SNIPPET)
+                        )
+                    {
+                        match snippet::parse(&edit.new_text) {
+                            Ok(snippet) => util::generate_transaction_from_snippet(
+                                doc.text(),
+                                doc.selection(view_id),
+                                &edit.range,
+                                snippet,
+                                doc.line_ending.as_str(),
+                                include_placeholder,
+                                offset_encoding,
+                            ),
+                            Err(err) => {
+                                log::error!(
+                                    "Failed to parse snippet: {:?}, remaining output: {}",
+                                    &edit.new_text,
+                                    err
+                                );
+                                Transaction::new(doc.text())
+                            }
+                        }
+                    } else {
+                        util::generate_transaction_from_completion_edit(
+                            doc.text(),
+                            doc.selection(view_id),
+                            edit,
+                            offset_encoding, // TODO: should probably transcode in Client
+                        )
+                    }
                 } else {
                     let text = item.insert_text.as_ref().unwrap_or(&item.label);
                     // Some LSPs just give you an insertText with no offset ¯\_(ツ)_/¯
@@ -157,9 +187,7 @@ impl Completion {
 
                         (cursor, cursor, Some(text.into()))
                     })
-                };
-
-                transaction
+                }
             }
 
             fn completion_changes(transaction: &Transaction, trigger_offset: usize) -> Vec<Change> {
@@ -190,6 +218,7 @@ impl Completion {
                         offset_encoding,
                         start_offset,
                         trigger_offset,
+                        true,
                     );
 
                     // initialize a savepoint
@@ -212,6 +241,7 @@ impl Completion {
                         offset_encoding,
                         start_offset,
                         trigger_offset,
+                        false,
                     );
 
                     doc.apply(&transaction, view.id);
