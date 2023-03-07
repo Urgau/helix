@@ -914,8 +914,8 @@ impl EditorView {
                                 doc.apply(&tx, view.id);
                             }
                             InsertEvent::TriggerCompletion => {
-                                let (_, doc) = current!(cxt.editor);
-                                doc.savepoint();
+                                let (view, doc) = current!(cxt.editor);
+                                doc.savepoint(view);
                             }
                         }
                     }
@@ -958,7 +958,8 @@ impl EditorView {
         }
 
         // Immediately initialize a savepoint
-        doc_mut!(editor).savepoint();
+        let (view, doc) = current!(editor);
+        doc.savepoint(view);
 
         editor.last_completion = None;
         self.last_insert.1.push(InsertEvent::TriggerCompletion);

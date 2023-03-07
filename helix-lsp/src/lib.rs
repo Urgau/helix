@@ -332,9 +332,11 @@ pub mod util {
                     .unwrap()
                     .iter()
                     .map(move |(from, to)| {
+                        // TODO: We can't use range.cursor() here because the text hasn't been updated yet
+                        let cursor = std::cmp::min(range.anchor, range.head);
                         Range::new(
-                            (range.anchor as i128 + *from) as usize,
-                            (range.anchor as i128 + *to) as usize,
+                            (cursor as i128 + *from) as usize,
+                            (cursor as i128 + *to) as usize,
                         )
                     })
             });

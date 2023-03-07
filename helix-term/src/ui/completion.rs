@@ -148,10 +148,6 @@ impl Completion {
                     (start_offset, end_offset, edit.new_text)
                 } else {
                     let new_text = item.insert_text.as_ref().unwrap_or(&item.label);
-                    // Some LSPs just give you an insertText with no offset ¯\_(ツ)_/¯
-                    // in these cases we need to check for a common prefix and remove it
-                    let prefix = Cow::from(doc.text().slice(start_offset..trigger_offset));
-                    let new_text = new_text.trim_start_matches::<&str>(&prefix);
 
                     // TODO: this needs to be true for the numbers to work out correctly
                     // in the closure below. It's passed in to a callback as this same
@@ -164,7 +160,18 @@ impl Completion {
                             == trigger_offset
                     );
 
-                    (0, 0, new_text.into())
+                    // Some LSPs just give you an insertText with no offset ¯\_(ツ)_/¯
+                    // in these cases we need to check for a common prefix and replace it
+                    let prefix = Cow::from(doc.text().slice(start_offset..trigger_offset));
+                    if new_text.starts_with::<&str>(&prefix) {
+                        (
+                            start_offset as i128 - trigger_offset as i128,
+                            0,
+                            new_text.into(),
+                        )
+                    } else {
+                        (0, 0, new_text.into())
+                    }
                 };
 
                 if matches!(item.kind, Some(lsp::CompletionItemKind::SNIPPET))
@@ -235,7 +242,7 @@ impl Completion {
                     );
 
                     // initialize a savepoint
-                    doc.savepoint();
+                    doc.savepoint(view);
                     doc.apply(&transaction, view.id);
 
                     editor.last_completion = Some(CompleteAction {

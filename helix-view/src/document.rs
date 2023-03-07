@@ -940,8 +940,9 @@ impl Document {
         self.undo_redo_impl(view, false)
     }
 
-    pub fn savepoint(&mut self) {
-        self.savepoint = Some(Transaction::new(self.text()));
+    pub fn savepoint(&mut self, view: &mut View) {
+        self.savepoint =
+            Some(Transaction::new(self.text()).with_selection(self.selection(view.id).clone()));
     }
 
     pub fn restore(&mut self, view: &mut View) {
